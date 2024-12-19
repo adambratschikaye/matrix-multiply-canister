@@ -1,0 +1,6 @@
+service : (nat64, nat64) -> {
+  multiply_heap : () -> ();
+  multiply_stable : () -> ();
+  multiply_stable_old : () -> ();
+  update_empty : () -> ();
+}
