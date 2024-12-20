@@ -26,7 +26,9 @@ pub mod ic0 {
     #[link(wasm_import_module = "ic0")]
     extern "C" {
         pub fn stable_read_v128(src: u64) -> core::arch::wasm32::v128;
+        pub fn unsafe_stable_read_v128(src: u64) -> core::arch::wasm32::v128;
         pub fn stable_write_i32(dst: u64, val: i32);
+        pub fn stable_prefetch(offset: u64, len: u64);
     }
 }
 
@@ -63,7 +65,7 @@ fn init(n: usize, d: usize) {
 #[cfg(target_arch = "wasm32")]
 #[candid_method(update)]
 #[update]
-pub fn multiply_stable() {
+pub fn multiply_stable_simd() {
     use core::arch::wasm32::*;
 
     let (n, d) = DATA.with(|data| {
@@ -89,6 +91,41 @@ pub fn multiply_stable() {
             + i32x4_extract_lane::<3>(vals);
         unsafe { ic0::stable_write_i32(out_addr + i * 4, val) };
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[candid_method(update)]
+#[update]
+pub fn multiply_unsafe_stable() {
+    use core::arch::wasm32::*;
+
+    DATA.with(|data| {
+        let mut data = data.borrow_mut();
+        let (n, d) = (data.b.len() as u64, data.out.len() as u64);
+
+        unsafe {
+            ic0::stable_prefetch(0, n * d * 4 + n * 4);
+        }
+
+        let a_addr = 0;
+        let b_addr = n * d * 4;
+
+        for i in 0..d {
+            let in_ = i * n * 4;
+            let mut vals = i32x4(0, 0, 0, 0);
+            for j in (0..n).step_by(4) {
+                let a_group: v128 = unsafe { ic0::unsafe_stable_read_v128(a_addr + in_ + j * 4) };
+                let b_group: v128 = unsafe { ic0::unsafe_stable_read_v128(b_addr + j * 4) };
+                vals = i32x4_add(vals, i32x4_mul(a_group, b_group));
+            }
+            let val = i32x4_extract_lane::<0>(vals)
+                + i32x4_extract_lane::<1>(vals)
+                + i32x4_extract_lane::<2>(vals)
+                + i32x4_extract_lane::<3>(vals);
+            // The model in stable memory is read-only, so we write the output into heap.
+            unsafe { *data.out.as_mut_ptr().add(i as usize) = val };
+        }
+    });
 }
 
 #[candid_method(update)]
@@ -132,7 +169,7 @@ pub fn multiply_stable_old() {
 #[cfg(not(target_arch = "wasm32"))]
 #[candid_method(update)]
 #[update]
-pub fn multiply_stable() {}
+pub fn multiply_stable_simd() {}
 
 #[candid_method(update)]
 #[update]
